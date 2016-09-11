@@ -286,7 +286,7 @@ def refresh() {
 
 return  zigbee.readAttribute(0x0001, 0x0000) +
     zigbee.readAttribute(0x0402, 0x0000) +
-    zigbee.readAttribute(0x0500, 0x0002)
+    zigbee.readAttribute(0x0500, 0x0002) +
     zigbee.configureReporting(0x0402, 0x0000, 0x29, 120, 600, 0x3dcccccd) +
     zigbee.configureReporting(0x0001, 0x0020, 0x20, 600, 6000, null) +
     zigbee.configureReporting(0x0500, 0x0002, 0x20, 1, 600, null)
