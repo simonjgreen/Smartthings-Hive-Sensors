@@ -13,34 +13,35 @@
  *  License for the specific language governing permissions and limitations
  *  under the License.
  */
- // http://www.zigbee.org/download/standards-zigbee-cluster-library/
-
 import physicalgraph.zigbee.clusters.iaszone.ZoneStatus
 
 metadata {
 	definition (
-    	name: "Hive Motion Sensor",
-        namespace: "simonjgreen",
-        author: "Simon Green", category: "C2") {
-					capability "Motion Sensor"
-					capability "Battery"
-					capability "Temperature Measurement"
-					capability "Refresh"
-					capability "Sensor"
+    	name: "Hive Contact Sensor",
+      namespace: "simonjgreen",
+      author: "Simon Green", category: "C2") {
+      capability "Polling"
+			capability "Contact Sensor"
+			capability "Battery"
+			capability "Temperature Measurement"
+			capability "Refresh"
+			capability "Sensor"
 
-					command "enrollResponse"
+      attribute "contact", "string", ["open", "closed"]
+			attribute "temperature", "number"
+			attribute "battery", "string"
 
-					fingerprint inClusters: "0000,0001,0003,000F,0020,0402,0500",
-			            	outClusters: "0000,0003,0500,0001,0020,0402,0406",
-		                manufacturer: "AlertMe.com",
-		                model: "PIR00140005",
-		                deviceJoinName: "Motion Sensor"
-				}
+			command "enrollResponse"
 
-			simulator {
-				status "active": "zone report :: type: 19 value: 0031"
-				status "inactive": "zone report :: type: 19 value: 0030"
-			}
+			fingerprint manufacturer: "AlertMe.com",
+                model: "WDS00140002",
+                deviceJoinName: "Contact Sensor"
+	}
+
+	simulator {
+		status "open": "open/closed: open"
+		status "closed": "open/closed: closed"
+	}
 
 	preferences {
 		section {
@@ -59,11 +60,9 @@ metadata {
 	}
 
 	tiles(scale: 2) {
-		multiAttributeTile(name:"motion", type: "generic", width: 6, height: 4){
-			tileAttribute ("device.motion", key: "PRIMARY_CONTROL") {
-				attributeState "active", label:'motion', icon:"st.motion.motion.active", backgroundColor:"#53a7c0"
-				attributeState "inactive", label:'no motion', icon:"st.motion.motion.inactive", backgroundColor:"#ffffff"
-			}
+		standardTile("contact", "device.contact",  width: 6, height: 4, key:"PRIMARY_CONTROL") {
+			state "open", label: "open", icon: "st.contact.contact.open", backgroundColor: "#FF0000"
+			state "closed", label: "closed", icon: "st.contact.contact.closed", backgroundColor: "#00CC00"
 		}
 		valueTile("temperature", "device.temperature", width: 2, height: 2) {
 			state("temperature", label:'${currentValue}°', unit:"C",
@@ -77,16 +76,13 @@ metadata {
 					[value: 32, color: "#bc2323"]
 				]
 			)
-		}
-		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
-			state "battery", label:'${currentValue}% battery', unit:""
+        }
+		standardTile("battery", "device.battery", inactiveLabel: true, decoration: "flat", width: 2, height: 2) {
+			state("battery", label: '${currentValue}', icon:"st.Appliances.appliances17")
 		}
 		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state "default", action:"refresh.refresh", icon:"st.secondary.refresh"
+			state("default", label:'refresh', action:"polling.poll", icon:"st.secondary.refresh-icon")
 		}
-
-		main(["motion", "temperature"])
-		details(["motion", "temperature", "battery", "refresh"])
 	}
 }
 
@@ -107,9 +103,14 @@ def parse(String description) {
 		map = parseIasMessage(description)
 	}
 
+	// Temporary fix for the case when Device is OFFLINE and is connected again
+	if (state.lastActivity == null){
+		state.lastActivity = now()
+		sendEvent(name: "deviceWatch-lastActivity", value: state.lastActivity, description: "Last Activity is on ${new Date((long)state.lastActivity)}", displayed: false, isStateChange: true)
+	}
+	state.lastActivity = now()
 
-
-	//log.debug "Parse returned $map"
+	log.debug "Parse returned $map"
 	def result = map ? createEvent(map) : null
 
 	if (description?.startsWith('enroll request')) {
@@ -119,7 +120,6 @@ def parse(String description) {
 	}
     log.debug "======================="
 	return result
-
 }
 
 private Map parseCatchAllMessage(String description) {
@@ -130,6 +130,7 @@ private Map parseCatchAllMessage(String description) {
 			case 0x0001:
 				resultMap = getBatteryResult(cluster.data.last())
 				break
+
 			case 0x0402:
 				// temp is last 2 data values. reverse to swap endian
 				String temp = cluster.data[-2..-1].reverse().collect { cluster.hex1(it) }.join()
@@ -137,10 +138,10 @@ private Map parseCatchAllMessage(String description) {
 				resultMap = getTemperatureResult(value)
 				break
 
-			//case 0x0406:
-			//	log.debug 'motion'
-			//	resultMap.name = 'motion'
-			//	break
+			case 0x0406:
+				log.debug 'motion'
+				resultMap.name = 'motion'
+				break
 		}
 	}
 
@@ -162,7 +163,7 @@ private Map parseReportAttributeMessage(String description) {
 		def nameAndValue = param.split(":")
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
 	}
-	//log.debug "Desc Map: $descMap"
+	log.debug "Desc Map: $descMap"
 
 	Map resultMap = [:]
 	if (descMap.cluster == "0402" && descMap.attrId == "0000") {
@@ -191,10 +192,9 @@ private Map parseCustomMessage(String description) {
 
 private Map parseIasMessage(String description) {
 	ZoneStatus zs = zigbee.parseZoneStatus(description)
-
+	log.debug zs
 	// Some sensor models that use this DTH use alarm1 and some use alarm2 to signify motion
-	//return (zs.isAlarm1Set() || zs.isAlarm2Set()) ? getMotionResult('active') : getMotionResult('inactive')
-    return zs.isTamperSet() ? getMotionResult('active') : getMotionResult('inactive')
+	return (zs.isAlarm1Set() || zs.isAlarm2Set()) ? getMotionResult('open') : getMotionResult('closed')
 }
 
 def getTemperature(value) {
@@ -224,34 +224,14 @@ private Map getBatteryResult(rawValue) {
 			result.descriptionText = "{{ device.displayName }} battery has too much power: (> 3.5) volts."
 		}
 		else {
-			if (device.getDataValue("manufacturer") == "SmartThings") {
-				volts = rawValue // For the batteryMap to work the key needs to be an int
-				def batteryMap = [28:100, 27:100, 26:100, 25:90, 24:90, 23:70,
-								  22:70, 21:50, 20:50, 19:30, 18:30, 17:15, 16:1, 15:0]
-				def minVolts = 15
-				def maxVolts = 28
-
-				if (volts < minVolts)
-					volts = minVolts
-				else if (volts > maxVolts)
-					volts = maxVolts
-				def pct = batteryMap[volts]
-				if (pct != null) {
-					result.value = pct
-                    def value = pct
-					result.descriptionText = "{{ device.displayName }} battery was {{ value }}%"
-				}
-			}
-			else {
-				def minVolts = 2.1
-				def maxVolts = 3.0
-				def pct = (volts - minVolts) / (maxVolts - minVolts)
-				def roundedPct = Math.round(pct * 100)
-				if (roundedPct <= 0)
-					roundedPct = 1
-				result.value = Math.min(100, roundedPct)
-				result.descriptionText = "{{ device.displayName }} battery was {{ value }}%"
-			}
+      def minVolts = 2.1
+      def maxVolts = 3.0
+      def pct = (volts - minVolts) / (maxVolts - minVolts)
+      def roundedPct = Math.round(pct * 100)
+      if (roundedPct <= 0)
+      roundedPct = 1
+      result.value = Math.min(100, roundedPct)
+      result.descriptionText = "{{ device.displayName }} battery was {{ value }}%"
 		}
 	}
 
@@ -281,13 +261,13 @@ private Map getTemperatureResult(value) {
 }
 
 private Map getMotionResult(value) {
-	log.debug 'motion'
-	String descriptionText = value == 'active' ? "{{ device.displayName }} detected motion" : "{{ device.displayName }} motion has stopped"
+	log.debug 'contact'
+	String descriptionText = value == 'open' ? "{{ device.displayName }} detected open" : "{{ device.displayName }} detected closed"
 	return [
-		name: 'motion',
+		name: 'contact',
 		value: value,
 		descriptionText: descriptionText,
-        translatable: true
+    translatable: true
 	]
 }
 
@@ -315,11 +295,13 @@ def refresh() {
 
 //	return refreshCmds + enrollResponse()
 
-    return zigbee.writeAttribute(0x0500, 0x0010, 0xf0, swapEndianHex(device.hub.zigbeeEui)) + //IAS sset address
-    	zigbee.configureReporting(0x0406, 0x0000, 0x18, 0, 600, null) + //Occupancy 8bit bitmap
-        zigbee.configureReporting(0x0402, 0x0000, 0x29, 30, 600, 1) + //Temp signed 16bit int
-        zigbee.configureReporting(0x0001, 0x0020, 0x20, 10, 600, 1) + //Power unsigned 8bit
-       	zigbee.configureReporting(0x0500, 0x0002, 0x19, 0, 30, null) //IAS 16bit bitmap
+
+	return [
+    	zigbee.writeAttribute(0x0500, 0x0010, 0xf0, swapEndianHex(device.hub.zigbeeEui)),
+        zigbee.configureReporting(0x0402, 0x0000, 0x29, 30, 600, 1), //Temp signed 16bit int
+        zigbee.configureReporting(0x0001, 0x0020, 0x20, 10, 3600, 1), //Power unsigned 8bit
+        zigbee.configureReporting(0x0500, 0x0002, 0x19, 0, 30, null) //IAS 16bit bitmap
+	]
 }
 
 /*def configure() {
@@ -345,14 +327,16 @@ def refresh() {
 
 
 def enrollResponse() {
-	log.debug "Sending enroll response"
+	log.debug "not Sending enroll response"
+	/*String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
 	[
 		//Resending the CIE in case the enroll request is sent before CIE is written
-        zigbee.writeAttribute(0x0500, 0x0010, 0xf0, swapEndianHex(device.hub.zigbeeEui)),
+		"zcl global write 0x500 0x10 0xf0 {${zigbeeEui}}", "delay 200",
+		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
 		//Enroll Response
-		"raw 0x500 {01 23 00 00 00}", //Read attribute repsonse
+		"raw 0x500 {01 23 00 00 00}",
 		"send 0x${device.deviceNetworkId} 1 1", "delay 200"
-	]
+	]*/
 }
 
 private getEndpointId() {
